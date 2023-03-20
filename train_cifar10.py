@@ -50,7 +50,7 @@ parser.add_argument('--convkernel', default='8', type=int, help="parameter for c
 args = parser.parse_args()
 
 # take in args
-usewandb = ~args.nowandb
+usewandb = False
 if usewandb:
     import wandb
     watermark = "{}_lr{}".format(args.net, args.lr)
@@ -218,6 +218,23 @@ elif args.net=="swin":
     net = swin_t(window_size=args.patch,
                 num_classes=10,
                 downscaling_factors=(2,2,2,1))
+
+elif args.net == "swinpool":
+    from models.swin_pool3 import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+
+elif args.net == "swinoff":
+    from models.swin_official import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+
+elif args.net == "vit_mlp":
+    from models.vit_MLP import ResMLP
+    net = ResMLP(dim = int(args.dimhead), num_classes=10, patch_size=args.patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
+
+elif args.net == "poolformer":
+    from models.vit_pool import PoolFormer
+    net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
 
 # For Multi-GPU
 if 'cuda' in device:

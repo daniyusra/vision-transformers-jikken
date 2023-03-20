@@ -6,6 +6,12 @@ This is an unofficial and elementary implementation of `An Image is Worth 16x16 
 I use pytorch for implementation.
 
 ### Updates
+* Added Swin Pool Former (Swin Transformer + Pooling) implementation (models/swin_pool3.py)
+
+* Added Official Swin Transformer implementation
+
+* Added PoolFormers from MetaFormers is What You Need
+
 * Added [ConvMixer]((https://openreview.net/forum?id=TVHS5Y4dNvM)) implementation. Really simple! (2021/10)
 
 * Added wandb train log to reproduce results. (2022/3)
@@ -31,7 +37,7 @@ I use pytorch for implementation.
 
 `python train_cifar10.py --net convmixer --n_epochs 400` # train with convmixer
 
-`python train_cifar10.py --net mlpmixer --n_epochs 500 --lr 1e-3`
+`python train_cifar10.py --net mlpmixer --n_epochs 500 --aug --lr 1e-3`
 
 `python train_cifar10.py --net cait --n_epochs 200` # train with cait
 

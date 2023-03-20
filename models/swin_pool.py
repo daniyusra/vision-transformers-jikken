@@ -4,7 +4,9 @@ import torch
 from torch import nn, einsum
 import numpy as np
 from einops import rearrange, repeat
-
+from models.vit_pool import GroupNorm, Mlp
+from models.vit_pool import Pooling
+from timm.models.layers import DropPath
 
 class CyclicShift(nn.Module):
     def __init__(self, displacement):
@@ -68,6 +70,121 @@ def get_relative_distances(window_size):
     distances = indices[None, :, :] - indices[:, None, :]
     return distances
 
+class WindowPoolFormerBlock(nn.Module):
+    """
+    Implementation of one PoolFormer block.
+    --dim: embedding dim
+    --pool_size: pooling size
+    --mlp_ratio: mlp expansion ratio
+    --act_layer: activation
+    --norm_layer: normalization
+    --drop: dropout rate
+    --drop path: Stochastic Depth, 
+        refer to https://arxiv.org/abs/1603.09382
+    --use_layer_scale, --layer_scale_init_value: LayerScale, 
+        refer to https://arxiv.org/abs/2103.17239
+    """
+    def __init__(self, dim,  window_size, relative_pos_embedding, heads, pool_size=3, mlp_ratio=4., 
+                 act_layer=nn.GELU, norm_layer=GroupNorm, 
+                 drop=0., drop_path=0., 
+                 use_layer_scale=True, layer_scale_init_value=1e-5, shifted=False,):
+
+        super().__init__()
+        self.heads = heads
+        self.norm1 = norm_layer(dim)
+        self.token_mixer = Pooling(pool_size=pool_size)
+        self.norm2 = norm_layer(dim)
+        self.window_size = window_size
+        self.relative_pos_embedding = relative_pos_embedding
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, 
+                       act_layer=act_layer, drop=drop)
+        self.shifted = shifted
+
+        if self.shifted:
+            displacement = window_size // 2
+            self.cyclic_shift = CyclicShift(-displacement)
+            self.cyclic_back_shift = CyclicShift(displacement)
+            self.upper_lower_mask = nn.Parameter(create_mask(window_size=window_size, displacement=displacement,
+                                                             upper_lower=True, left_right=False), requires_grad=False)
+            self.left_right_mask = nn.Parameter(create_mask(window_size=window_size, displacement=displacement,
+                                                            upper_lower=False, left_right=True), requires_grad=False)
+
+        if self.relative_pos_embedding:
+            self.relative_indices = get_relative_distances(window_size) + window_size - 1
+            self.pos_embedding = nn.Parameter(torch.randn(2 * window_size - 1, 2 * window_size - 1))
+        else:
+            self.pos_embedding = nn.Parameter(torch.randn(window_size ** 2, window_size ** 2))
+
+        # The following two techniques are useful to train deep PoolFormers.
+        self.drop_path = DropPath(drop_path) if drop_path > 0. \
+            else nn.Identity()
+        self.use_layer_scale = use_layer_scale
+        if use_layer_scale:
+            self.layer_scale_1 = nn.Parameter(
+                layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            self.layer_scale_2 = nn.Parameter(
+                layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+
+    def forward(self, x):
+        if self.shifted:
+            x = self.cyclic_shift(x)
+
+
+        b, n_h, n_w, _, h = *x.shape, self.heads
+
+
+        x = rearrange(x, 'b h w c -> b c w h')
+        print("INGFO2")
+        print(self.window_size)
+        print(*x.shape)
+        print("INGFOLAEN")
+        print(self.heads)
+
+        nw_h = n_h // self.window_size
+        nw_w = n_w // self.window_size
+
+        dots = self.token_mixer(self.norm1(x))
+
+        if self.use_layer_scale: dots = dots * self.layer_scale_1.unsqueeze(-1).unsqueeze(-1)
+
+
+        
+        if self.relative_pos_embedding:
+            print(self.pos_embedding[self.relative_indices[:, :, 0], self.relative_indices[:, :, 1]].shape)
+            dots += self.pos_embedding[self.relative_indices[:, :, 0], self.relative_indices[:, :, 1]]
+        else:
+            dots += self.pos_embedding
+
+        if self.shifted:
+            #dots[:, :, -nw_w:] += self.upper_lower_mask
+            #dots[:, :, nw_w - 1::nw_w] += self.left_right_mask
+            dots += self.upper_lower_mask
+            dots += self.left_right_mask
+
+
+
+        dots = self.drop_path(dots)
+
+        x = x + dots
+
+
+
+        if self.use_layer_scale:
+            x = x + self.drop_path(
+                self.layer_scale_2.unsqueeze(-1).unsqueeze(-1)
+                * self.mlp(self.norm2(x)))
+        else:
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+
+        x = rearrange(x, 'b h w c -> b c w h')
+
+        print("INGFO3")
+        print(*x.shape)
+        print(self.heads)
+
+        return x
 
 class WindowAttention(nn.Module):
     def __init__(self, dim, heads, head_dim, shifted, window_size, relative_pos_embedding):
@@ -102,8 +219,11 @@ class WindowAttention(nn.Module):
     def forward(self, x):
         if self.shifted:
             x = self.cyclic_shift(x)
-        
+
         b, n_h, n_w, _, h = *x.shape, self.heads
+
+
+        print("INGFO")
 
         qkv = self.to_qkv(x).chunk(3, dim=-1)
         nw_h = n_h // self.window_size
@@ -180,11 +300,15 @@ class StageModule(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(layers // 2):
             self.layers.append(nn.ModuleList([
-                SwinBlock(dim=hidden_dimension, heads=num_heads, head_dim=head_dim, mlp_dim=hidden_dimension * 4,
-                          shifted=False, window_size=window_size, relative_pos_embedding=relative_pos_embedding),
-                SwinBlock(dim=hidden_dimension, heads=num_heads, head_dim=head_dim, mlp_dim=hidden_dimension * 4,
-                          shifted=True, window_size=window_size, relative_pos_embedding=relative_pos_embedding),
-            ]))
+                #SwinBlock(dim=hidden_dimension, heads=num_heads, head_dim=head_dim, mlp_dim=hidden_dimension * 4,
+                          #shifted=False, window_size=window_size, relative_pos_embedding=relative_pos_embedding),
+                #SwinBlock(dim=hidden_dimension, heads=num_heads, head_dim=head_dim, mlp_dim=hidden_dimension * 4,
+                          #shifted=True, window_size=window_size, relative_pos_embedding=relative_pos_embedding),
+                WindowPoolFormerBlock(dim=hidden_dimension, heads=num_heads, shifted = False, window_size= window_size, 
+                        relative_pos_embedding=relative_pos_embedding),
+                WindowPoolFormerBlock(dim=hidden_dimension, heads=num_heads, shifted = True, window_size= window_size, 
+                        relative_pos_embedding=relative_pos_embedding),                
+                ]))
 
     def forward(self, x):
         x = self.patch_partition(x)
