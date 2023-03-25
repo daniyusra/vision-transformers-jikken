@@ -95,13 +95,55 @@ if aug:
     transform_train.transforms.insert(0, RandAugment(N, M))
 
 # Prepare dataset
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=8)
+#trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+#trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=8)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=8)
+#testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+#testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=8)
 
-classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+#CINIC10 Dataset
+data= "data/cinic-10"
+traindir = os.path.join(data, 'train')
+validatedir = os.path.join(data, 'valid')
+testdir = os.path.join(data, 'test')
+cinic_mean = [0.47889522, 0.47227842, 0.43047404]
+cinic_std = [0.24205776, 0.23828046, 0.25874835]
+normalize = transforms.Normalize(mean=cinic_mean, std=cinic_std)
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=cinic_mean, std=cinic_std)
+])
+
+train_transform = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=cinic_mean, std=cinic_std)
+])
+
+
+
+trainset = torchvision.datasets.ImageFolder(root=traindir, transform=train_transform)
+trainloader = torch.utils.data.DataLoader(trainset,
+                                          batch_size=bs,
+                                          shuffle=True,
+                                          num_workers=8)
+
+validateset = torchvision.datasets.ImageFolder(root=validatedir, transform=transform)
+validateloader = torch.utils.data.DataLoader(validateset,
+                                             batch_size=100,
+                                             shuffle=True,
+                                             num_workers=8)
+
+testset = torchvision.datasets.ImageFolder(root=testdir, transform=transform)
+testloader = torch.utils.data.DataLoader(testset,
+                                         batch_size=100,
+                                         shuffle=True,
+                                         num_workers=8)
+
+classes = ('airplane', 'automobile', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 # Model factory..
 print('==> Building model..')
@@ -219,23 +261,27 @@ elif args.net=="swin":
                 num_classes=10,
                 downscaling_factors=(2,2,2,1))
 
+elif args.net=="swin-s":
+    from models.swin import swin_s
+    net = swin_s(window_size=args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+
 elif args.net == "swinpool":
     from models.swin_pool3 import SwinTransformer
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
 
-elif args.net == "swinabl":
-    from models.swin_abl import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+elif args.net == "swinpool-s":
+    from models.swin_pool3 import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths = [2,2,18,2])
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
 
 elif args.net == "swinoff":
     from models.swin_official import SwinTransformer
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
 
-elif args.net == "swinoff2":
-    from models.swin_official2 import SwinTransformerV2
-    net = SwinTransformerV2(window_size=args.patch, num_classes=10, img_size=size)
+elif args.net == "swinoff-s":
+    from models.swin_official import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths= [2,2,18,2])
 
 elif args.net == "vit_mlp":
     from models.vit_MLP import ResMLP
@@ -244,6 +290,9 @@ elif args.net == "vit_mlp":
 elif args.net == "poolformer":
     from models.vit_pool import PoolFormer
     net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
+
+
+
 
 # For Multi-GPU
 if 'cuda' in device:
@@ -368,6 +417,32 @@ for epoch in range(start_epoch, args.n_epochs):
         writer.writerow(list_loss) 
         writer.writerow(list_acc) 
     print(list_loss)
+
+
+
+def validate():
+    global best_acc
+    net.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(validateloader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)
+
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            progress_bar(batch_idx, len(validateloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
+
+val_loss, acc = validate()
+print("final validation=" + val_loss + " , acc = " + acc)
 
 # writeout wandb
 if usewandb:

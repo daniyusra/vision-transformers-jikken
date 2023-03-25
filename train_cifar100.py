@@ -95,10 +95,10 @@ if aug:
     transform_train.transforms.insert(0, RandAugment(N, M))
 
 # Prepare dataset
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=8)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=8)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
@@ -118,7 +118,7 @@ elif args.net=='res101':
     net = ResNet101()
 elif args.net=="convmixer":
     # from paper, accuracy >96%. you can tune the depth and dim to scale accuracy and speed.
-    net = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=10)
+    net = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=100)
 elif args.net=="mlpmixer":
     from models.mlpmixer import MLPMixer
     net = MLPMixer(
@@ -127,14 +127,14 @@ elif args.net=="mlpmixer":
     patch_size = args.patch,
     dim = 512,
     depth = 6,
-    num_classes = 10
+    num_classes = 100
 )
 elif args.net=="vit_small":
     from models.vit_small import ViT
     net = ViT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 6,
     heads = 8,
@@ -147,7 +147,7 @@ elif args.net=="vit_tiny":
     net = ViT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 4,
     heads = 6,
@@ -160,7 +160,7 @@ elif args.net=="simplevit":
     net = SimpleViT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 6,
     heads = 8,
@@ -171,7 +171,7 @@ elif args.net=="vit":
     net = ViT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 6,
     heads = 8,
@@ -182,13 +182,13 @@ elif args.net=="vit":
 elif args.net=="vit_timm":
     import timm
     net = timm.create_model("vit_base_patch16_384", pretrained=True)
-    net.head = nn.Linear(net.head.in_features, 10)
+    net.head = nn.Linear(net.head.in_features, 100)
 elif args.net=="cait":
     from models.cait import CaiT
     net = CaiT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 6,   # depth of transformer for patch to patch attention only
     cls_depth=2, # depth of cross attention of CLS tokens to patch
@@ -203,7 +203,7 @@ elif args.net=="cait_small":
     net = CaiT(
     image_size = size,
     patch_size = args.patch,
-    num_classes = 10,
+    num_classes = 100,
     dim = int(args.dimhead),
     depth = 6,   # depth of transformer for patch to patch attention only
     cls_depth=2, # depth of cross attention of CLS tokens to patch
@@ -216,30 +216,21 @@ elif args.net=="cait_small":
 elif args.net=="swin":
     from models.swin import swin_t
     net = swin_t(window_size=args.patch,
-                num_classes=10,
+                num_classes=100,
                 downscaling_factors=(2,2,2,1))
 
 elif args.net == "swinpool":
     from models.swin_pool3 import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-
-elif args.net == "swinabl":
-    from models.swin_abl import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+    net = SwinTransformer(window_size=args.patch, num_classes=100, img_size=size)
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
 
 elif args.net == "swinoff":
     from models.swin_official import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-
-elif args.net == "swinoff2":
-    from models.swin_official2 import SwinTransformerV2
-    net = SwinTransformerV2(window_size=args.patch, num_classes=10, img_size=size)
+    net = SwinTransformer(window_size=args.patch, num_classes=100, img_size=size)
 
 elif args.net == "vit_mlp":
     from models.vit_MLP import ResMLP
-    net = ResMLP(dim = int(args.dimhead), num_classes=10, patch_size=args.patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
+    net = ResMLP(dim = int(args.dimhead), num_classes=100, patch_size=args.patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
 
 elif args.net == "poolformer":
     from models.vit_pool import PoolFormer
