@@ -30140,3 +30140,12 @@ data/cinic-10/test/bird/cifar10-train-49995.png
 pretrainedmodels/.nfs0000000002b5cff9000000e1
 pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth
 pretrainedmodels/swin_small_patch4_window7_224_22k.pth
+datasets/cifar-10-python.tar.gz
+datasets/cifar-10-batches-py/batches.meta
+datasets/cifar-10-batches-py/data_batch_1
+datasets/cifar-10-batches-py/data_batch_2
+datasets/cifar-10-batches-py/data_batch_3
+datasets/cifar-10-batches-py/data_batch_4
+datasets/cifar-10-batches-py/data_batch_5
+datasets/cifar-10-batches-py/readme.html
+datasets/cifar-10-batches-py/test_batch
