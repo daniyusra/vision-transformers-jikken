@@ -277,6 +277,8 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
         x = shortcut + self.drop_path(x)
 
+
+        #print(self.norm2(x).shape)
         # FFN
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 

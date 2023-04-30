@@ -27,7 +27,7 @@ import csv
 import time
 
 from models import *
-from utils import progress_bar, load_pretrained
+from utils import progress_bar, load_pretrained, prune_transformer
 from randomaug import RandAugment
 from models.vit import ViT
 from models.convmixer import ConvMixer
@@ -230,13 +230,6 @@ elif args.net == "swinpool":
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
-
-elif args.net == "swinpoolconv2d":
-    from models.swin_pool3conv2d import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-    print(net.flops())
-    cudnn.deterministic=True
     
 
 elif args.net == "swinpool-exp":
@@ -306,10 +299,14 @@ elif args.net == "poolformer":
 
 # For Multi-GPU
 if 'cuda' in device:
+    def force_cudnn_initialization():
+        s = 32
+        dev = torch.device('cuda')
+        torch.nn.functional.conv2d(torch.zeros(s, s, s, s, device=dev), torch.zeros(s, s, s, s, device=dev))
+    force_cudnn_initialization()
     print(device)
     print("using data parallel")
     net = torch.nn.DataParallel(net) # make parallel
-    
     cudnn.benchmark = True
 
 print(summary(net.to(device),(3,size, size)))
@@ -318,10 +315,11 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/{}-ckpt.t7'.format(args.net))
-    net.load_state_dict(checkpoint['net'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch']
+    checkpoint = torch.load('./checkpoint/{}-{}-ckpt.t7'.format(args.net, args.patch))
+    net.load_state_dict(checkpoint['model'])
+    net.eval()
+    #best_acc = checkpoint['acc']
+    #start_epoch = checkpoint['epoch']
 
 # Loss is CE
 criterion = nn.CrossEntropyLoss()
@@ -445,8 +443,14 @@ for epoch in range(start_epoch, args.n_epochs):
         writer.writerow(list_test_time)
     print(list_loss)
 
+prune_transformer(net) 
+print("FINAL VALIDATION AFTER PRUNING")
+test(epoch)
 
-
+print("After pruning size")
+print(summary(net.to(device),(3,size, size)))
+pytorch_total_params = sum(p.count_nonzero() for p in net.parameters())
+print(pytorch_total_params)
 # writeout wandb
 if usewandb:
     wandb.save("wandb_{}.h5".format(args.net))

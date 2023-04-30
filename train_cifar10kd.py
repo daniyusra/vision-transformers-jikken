@@ -25,9 +25,11 @@ import argparse
 import pandas as pd
 import csv
 import time
+from loss.logits import Logits
+from model_loader import load_model
 
 from models import *
-from utils import progress_bar, load_pretrained
+from utils import count_parameters_in_MB, progress_bar, load_pretrained
 from randomaug import RandAugment
 from models.vit import ViT
 from models.convmixer import ConvMixer
@@ -41,15 +43,29 @@ parser.add_argument('--noaug', action='store_true', help='disable use randomaug'
 parser.add_argument('--noamp', action='store_true', help='disable mixed precision training. for older pytorch versions')
 parser.add_argument('--nowandb', action='store_true', help='disable wandb')
 parser.add_argument('--mixup', action='store_true', help='add mixup augumentations')
-parser.add_argument('--net', default='vit')
+parser.add_argument('--net', required=True, help='name of student')
 parser.add_argument('--bs', default='512')
 parser.add_argument('--size', default="32")
 parser.add_argument('--n_epochs', type=int, default='200')
 parser.add_argument('--patch', default='4', type=int, help="patch for ViT")
 parser.add_argument('--dimhead', default="512", type=int)
 parser.add_argument('--convkernel', default='8', type=int, help="parameter for convmixer")
+parser.add_argument('--t_model', type=str, required=True, help='path name of teacher model')
+parser.add_argument('--t_name', type=str, required=True, help='name of teacher')   
+parser.add_argument('--s_init', type=str, default = "", help='initial parameters of student model')
+parser.add_argument('--cuda', type=int, default=1)
 
 args = parser.parse_args()
+
+#distillation classs
+def my_loss(scores, targets, temperature = 5):
+    softmax_op = nn.Softmax(dim=1)
+    mseloss_fn = nn.MSELoss()
+    soft_pred = softmax_op(scores / temperature)
+    soft_targets = softmax_op(targets / temperature)
+    loss = mseloss_fn(soft_pred, soft_targets)
+    return loss
+
 
 # take in args
 usewandb = False
@@ -105,212 +121,26 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False,
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-# Model factory..
-print('==> Building model..')
-# net = VGG('VGG19')
-if args.net=='res18':
-    net = ResNet18()
-elif args.net=='vgg':
-    net = VGG('VGG19')
-elif args.net=='res34':
-    net = ResNet34()
-elif args.net=='res50':
-    net = ResNet50()
-elif args.net=='res101':
-    net = ResNet101()
-elif args.net=="convmixer":
-    # from paper, accuracy >96%. you can tune the depth and dim to scale accuracy and speed.
-    net = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=10)
-elif args.net=="mlpmixer":
-    from models.mlpmixer import MLPMixer
-    net = MLPMixer(
-    image_size = 32,
-    channels = 3,
-    patch_size = args.patch,
-    dim = 512,
-    depth = 6,
-    num_classes = 10
-)
-elif args.net=="vit_small":
-    from models.vit_small import ViT
-    net = ViT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 6,
-    heads = 8,
-    mlp_dim = 512,
-    dropout = 0.1,
-    emb_dropout = 0.1
-)
-elif args.net=="vit_tiny":
-    from models.vit_small import ViT
-    net = ViT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 4,
-    heads = 6,
-    mlp_dim = 256,
-    dropout = 0.1,
-    emb_dropout = 0.1
-)
-elif args.net=="simplevit":
-    from models.simplevit import SimpleViT
-    net = SimpleViT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 6,
-    heads = 8,
-    mlp_dim = 512
-)
-elif args.net=="vit":
-    # ViT for cifar10
-    net = ViT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 6,
-    heads = 8,
-    mlp_dim = 512,
-    dropout = 0.1,
-    emb_dropout = 0.1
-)
+net = load_model(netname = args.net, patch = args.patch, dimhead = args.dimhead, imsize = int(args.size), cuda = args.cuda, num_classes=10)
+if args.s_init != "":
+    checkpoint = torch.load(args.s_init)
+    load_pretrained(checkpoint['net'], net)
+print('Student: %s', net)
+print('Student param size = %fMB', count_parameters_in_MB(net))
+
+tnet = load_model(netname = args.t_name, patch = args.patch, dimhead = args.dimhead, imsize = int(args.size), cuda = args.cuda, num_classes=10)
+checkpoint = torch.load(args.t_model)
+print("FUCK")
+
+tnet.load_state_dict(checkpoint["model"])
+tnet.eval()
+for param in tnet.parameters():
+    param.requires_grad = False
+print('Teacher: %s', tnet)
+print('Teacher param size = %fMB', count_parameters_in_MB(tnet))
+print('-----------------------------------------------')
 
 
-elif args.net=="vit_timm":
-    import timm
-    net = timm.create_model("vit_base_patch16_384", pretrained=True)
-    net.head = nn.Linear(net.head.in_features, 10)
-elif args.net=="cait":
-    from models.cait import CaiT
-    net = CaiT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 6,   # depth of transformer for patch to patch attention only
-    cls_depth=2, # depth of cross attention of CLS tokens to patch
-    heads = 8,
-    mlp_dim = 512,
-    dropout = 0.1,
-    emb_dropout = 0.1,
-    layer_dropout = 0.05
-)
-elif args.net=="cait_small":
-    from models.cait import CaiT
-    net = CaiT(
-    image_size = size,
-    patch_size = args.patch,
-    num_classes = 10,
-    dim = int(args.dimhead),
-    depth = 6,   # depth of transformer for patch to patch attention only
-    cls_depth=2, # depth of cross attention of CLS tokens to patch
-    heads = 6,
-    mlp_dim = 256,
-    dropout = 0.1,
-    emb_dropout = 0.1,
-    layer_dropout = 0.05
-)
-elif args.net=="swin":
-    from models.swin import swin_t
-    net = swin_t(window_size=args.patch,
-                num_classes=10,
-                downscaling_factors=(2,2,2,1))
-
-
-
-elif args.net == "swinpool":
-    from models.swin_pool3 import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-    print(net.flops())
-
-elif args.net == "swinpoolconv2d":
-    from models.swin_pool3conv2d import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-    print(net.flops())
-    cudnn.deterministic=True
-    
-
-elif args.net == "swinpool-exp":
-    from models.swin_pool3 import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2, 2, 18, 2])
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-    print(net.flops())
-    
-
-elif args.net == "swinpooltpretrained22":
-    from models.swin_pool3 import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-    #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
-    #net.eval()
-    load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
-
-elif args.net == "swinabl":
-    from models.swin_abl import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-    print(net.flops())
-
-elif args.net == "swinabl-s":
-    from models.swin_abl import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2, 2, 18, 2])
-       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
-
-elif args.net == "swinoff":
-    from models.swin_official import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-    print(net.flops())
-
-elif args.net == "swinoff-t-22pretrained":
-    from models.swin_official import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
-    for param in net.parameters():
-        print(type(param), param.size())
-    #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
-    #net.eval()
-    load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
-
-elif args.net == "swinoff-s-22pretrained":
-    from models.swin_official import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2,2,18,2])
-    #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
-    #net.eval()
-    load_pretrained("./pretrainedmodels/swin_small_patch4_window7_224_22k.pth", net)
-
-elif args.net =="swinoff-b":
-    from models.swin_official import SwinTransformer
-    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths = [2,2,18,2], embed_dim = 128, num_heads = (4,8,16,32))
- 
-
-elif args.net == "swinoff2":
-    from models.swin_official2 import SwinTransformerV2
-    net = SwinTransformerV2(window_size=args.patch, num_classes=10, img_size=size)
-
-elif args.net == "vit_mlp":
-    from models.vit_MLP import ResMLP
-    net = ResMLP(dim = int(args.dimhead), num_classes=10, patch_size=args.patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
-
-elif args.net == "poolformer":
-    from models.vit_pool import PoolFormer
-    net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
-
-
-
-# For Multi-GPU
-if 'cuda' in device:
-    print(device)
-    print("using data parallel")
-    net = torch.nn.DataParallel(net) # make parallel
-    
-    cudnn.benchmark = True
 
 print(summary(net.to(device),(3,size, size)))
 
@@ -325,6 +155,7 @@ if args.resume:
 
 # Loss is CE
 criterion = nn.CrossEntropyLoss()
+criterionKD = Logits()
 
 if args.opt == "adam":
     optimizer = optim.Adam(net.parameters(), lr=args.lr)
@@ -339,16 +170,20 @@ scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 def train(epoch):
     print('\nEpoch: %d' % epoch)
     net.train()
+    tnet.eval()
     train_loss = 0
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         # Train with amp
-    
+
         with torch.cuda.amp.autocast(enabled=use_amp):
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            teacheroutputs = tnet(inputs)
+
+            #loss = criterion(outputs, targets) + my_loss(outputs, teacheroutputs, 4)
+            loss = my_loss(outputs, teacheroutputs, 4)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -444,8 +279,6 @@ for epoch in range(start_epoch, args.n_epochs):
         writer.writerow(list_train_time)
         writer.writerow(list_test_time)
     print(list_loss)
-
-
 
 # writeout wandb
 if usewandb:

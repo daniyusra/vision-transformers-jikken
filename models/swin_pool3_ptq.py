@@ -1,3 +1,7 @@
+#VERSION OF SWIN POOL THAT IMPLEMENTS POST-TRAINING QUANTIZATION
+#WITH IDEAS ADAPTED FROM  https://arxiv.org/pdf/2109.12948.pdf
+#Default Setting = W8 A32 
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
@@ -473,7 +477,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class SwinTransformer(nn.Module):
+class SwinPoolFormersPTQuantizable(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030

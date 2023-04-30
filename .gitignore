@@ -30137,3 +30137,6 @@ data/cinic-10/test/bird/cifar10-train-49730.png
 data/cinic-10/test/bird/cifar10-train-49781.png
 data/cinic-10/test/bird/cifar10-train-49956.png
 data/cinic-10/test/bird/cifar10-train-49995.png
+pretrainedmodels/.nfs0000000002b5cff9000000e1
+pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth
+pretrainedmodels/swin_small_patch4_window7_224_22k.pth

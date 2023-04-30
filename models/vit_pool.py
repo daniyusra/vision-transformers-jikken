@@ -75,6 +75,7 @@ class Pooling(nn.Module):
 
     def forward(self, x):
         return self.pool(x) - x
+    
 
 
 class Mlp(nn.Module):
@@ -147,7 +148,7 @@ class PoolFormerBlock(nn.Module):
                 layer_scale_init_value * torch.ones((dim)), requires_grad=True)
 
     def forward(self, x):
-        print(*x.shape)
+        #print(*x.shape)
         if self.use_layer_scale:
             x = x + self.drop_path(
                 self.layer_scale_1.unsqueeze(-1).unsqueeze(-1)

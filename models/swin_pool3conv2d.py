@@ -20,19 +20,39 @@ except:
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
+        #print("in_features: {}".format(in_features))
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        #self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = nn.Conv2d(in_features, hidden_features, 1)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        #self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2 = nn.Conv2d(hidden_features, out_features, 1)
         self.drop = nn.Dropout(drop)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Conv2d):
+            trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        #print("x initial shape: {}".format(x.shape))
+        B_, N, C = x.shape
+        x = x.reshape(C, N, B_)
+        #print("x fc1 shape: {}".format(x.shape))
         x = self.fc1(x)
+        #print("x fc1 shape: {}".format(x.shape))
         x = self.act(x)
+        #print("x act shape: {}".format(x.shape))
         x = self.drop(x)
         x = self.fc2(x)
+        #print("x fc2 shape: {}".format(x.shape))
+
         x = self.drop(x)
+
+        x = x.reshape(B_, N, C)
         return x
 
 
@@ -120,7 +140,15 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        #qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
+        qkv = self.qkv(x)
+
+        print("X shape = {}".format(x.shape))
+        print("qkv shape after Linear 1 = {}".format(qkv.shape))
+
+        qkv = qkv.reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
@@ -142,8 +170,16 @@ class WindowAttention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+
+        print("x shape after transpose = {}".format(x.shape))
+
         x = self.proj(x)
+
+        print("x shape after proj = {}".format(x.shape))
         x = self.proj_drop(x)
+
+        raise Exception("FUCK")
+    
         return x
 
     def extra_repr(self) -> str:
@@ -282,7 +318,7 @@ class SwinTransformerBlock(nn.Module):
         x = shortcut + self.drop_path(x)
 
         # FFN
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        x = x + self.drop_path(self.layer_scale_1*self.mlp(self.norm2(x)))
 
         return x
 
