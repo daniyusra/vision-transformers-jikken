@@ -49,6 +49,7 @@ parser.add_argument('--patch', default='4', type=int, help="patch for ViT")
 parser.add_argument('--dimhead', default="512", type=int)
 parser.add_argument('--convkernel', default='8', type=int, help="parameter for convmixer")
 
+
 args = parser.parse_args()
 
 # take in args
@@ -104,6 +105,8 @@ testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=8)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+quantize = False;
 
 # Model factory..
 print('==> Building model..')
@@ -237,7 +240,12 @@ elif args.net == "swinpoolconv2d":
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
     cudnn.deterministic=True
-    
+
+elif args.net == "swinpoolptq":
+    from models.swin_pool3_ptq import SwinPoolFormersPTQuantizable
+    net = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size)
+    qnet = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size, q=True)
+    quantize = True;
 
 elif args.net == "swinpool-exp":
     from models.swin_pool3 import SwinTransformer

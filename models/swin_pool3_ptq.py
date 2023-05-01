@@ -5,6 +5,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
+from torch.quantization import QuantStub, DeQuantStub, QConfig, MinMaxObserver
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from models.vit_pool import Pooling
 
@@ -508,7 +509,7 @@ class SwinPoolFormersPTQuantizable(nn.Module):
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, fused_window_process=False, **kwargs):
+                 use_checkpoint=False, fused_window_process=False, q = False,**kwargs):
         super().__init__()
 
         self.num_classes = num_classes
@@ -559,6 +560,15 @@ class SwinPoolFormersPTQuantizable(nn.Module):
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.q = q
+
+        
+        if q:
+          self.qconfig = QConfig(
+                activation=MinMaxObserver.with_args(dtype=torch.qint8),
+                weight=MinMaxObserver.with_args(dtype=torch.qint32))
+          self.quant = QuantStub()
+          self.dequant = DeQuantStub()
 
         self.apply(self._init_weights)
 
@@ -580,6 +590,8 @@ class SwinPoolFormersPTQuantizable(nn.Module):
         return {'relative_position_bias_table'}
 
     def forward_features(self, x):
+        if self.q:
+          x = self.quant(x)
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed
@@ -591,6 +603,8 @@ class SwinPoolFormersPTQuantizable(nn.Module):
         x = self.norm(x)  # B L C
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
+        if self.q:
+          x = self.dequant(x)
         return x
 
     def forward(self, x):
