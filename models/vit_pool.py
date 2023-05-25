@@ -27,6 +27,8 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, 
                               stride=stride, padding=padding)
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+        print("IN CHANS", in_chans)
+        print("EMBED_DIM", embed_dim)
 
     def forward(self, x):
         x = self.proj(x)

@@ -24,6 +24,7 @@ class Mlp(nn.Module):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         #self.fc1 = nn.Linear(in_features, hidden_features)
+        print("HIDDEN FEATURES {}".format(hidden_features))
         self.fc1 = nn.Conv2d(in_features, hidden_features, 1)
         self.act = act_layer()
         #self.fc2 = nn.Linear(hidden_features, out_features)
@@ -39,8 +40,8 @@ class Mlp(nn.Module):
 
     def forward(self, x):
         #print("x initial shape: {}".format(x.shape))
-        B_, N, C = x.shape
-        x = x.reshape(C, N, B_)
+        B, H, W, C = x.shape
+        x = x.reshape(B , C, H, W) #probably reshape is not correct 
         #print("x fc1 shape: {}".format(x.shape))
         x = self.fc1(x)
         #print("x fc1 shape: {}".format(x.shape))
@@ -52,7 +53,7 @@ class Mlp(nn.Module):
 
         x = self.drop(x)
 
-        x = x.reshape(B_, N, C)
+        x = x.reshape(B , H, W, C)
         return x
 
 
@@ -317,9 +318,10 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
         x = shortcut + self.drop_path(x)
 
+        x = x.view(B, H, W, C)
         # FFN
         x = x + self.drop_path(self.layer_scale_1*self.mlp(self.norm2(x)))
-
+        x = x.view(B, H * W, C)
         return x
 
     def extra_repr(self) -> str:

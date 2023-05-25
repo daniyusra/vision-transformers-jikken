@@ -20,19 +20,34 @@ except:
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
+        #print("in_features: {}".format(in_features))
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        #self.fc1 = nn.Linear(in_features, hidden_features)
+        print("HIDDEN FEATURES {}".format(hidden_features))
+        self.fc1 = nn.Conv1d(in_features, hidden_features, 1)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        #self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2 = nn.Conv1d(hidden_features, out_features, 1)
         self.drop = nn.Dropout(drop)
+        #self.apply(self._init_weights)
 
     def forward(self, x):
+        #print("x initial shape: {}".format(x.shape))
+        B, N, C = x.shape
+        x = x.reshape(B , C, N) #probably reshape is not correct 
+        #print("x fc1 shape: {}".format(x.shape))
         x = self.fc1(x)
+        #print("x fc1 shape: {}".format(x.shape))
         x = self.act(x)
+        #print("x act shape: {}".format(x.shape))
         x = self.drop(x)
         x = self.fc2(x)
+        #print("x fc2 shape: {}".format(x.shape))
+
         x = self.drop(x)
+
+        x = x.reshape(B , N, C)
         return x
 
 
@@ -120,7 +135,15 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        #qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
+        qkv = self.qkv(x)
+
+        print("X shape = {}".format(x.shape))
+        print("qkv shape after Linear 1 = {}".format(qkv.shape))
+
+        qkv = qkv.reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
@@ -142,8 +165,16 @@ class WindowAttention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+
+        print("x shape after transpose = {}".format(x.shape))
+
         x = self.proj(x)
+
+        print("x shape after proj = {}".format(x.shape))
         x = self.proj_drop(x)
+
+        raise Exception("FUCK")
+    
         return x
 
     def extra_repr(self) -> str:
@@ -161,22 +192,6 @@ class WindowAttention(nn.Module):
         # x = self.proj(x)
         flops += N * self.dim * self.dim
         return flops
-
-class GroupNorm(nn.GroupNorm):
-    """
-    Group Normalization with 1 group.
-    Input: tensor in shape [B, L, C] 
-    """
-    def __init__(self, num_channels, **kwargs):
-        super().__init__(1, num_channels, **kwargs)
-    
-    def forward(self,x):
-        B, L, C = x.shape
-        x = x.reshape(B,C,L)
-        x = super().forward(x)
-        x = x.reshape(B,L,C)
-        return x;
-    
 
 
 class SwinTransformerBlock(nn.Module):
@@ -297,9 +312,10 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
         x = shortcut + self.drop_path(x)
 
+        #x = x.view(B, H, W, C)
         # FFN
         x = x + self.drop_path(self.layer_scale_1*self.mlp(self.norm2(x)))
-
+        #x = x.view(B, H * W, C)
         return x
 
     def extra_repr(self) -> str:
@@ -530,10 +546,6 @@ class SwinTransformer(nn.Module):
         self.patch_norm = patch_norm
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
-
-        if norm_layer == "GroupNorm":
-            norm_layer = GroupNorm;
-        
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(

@@ -285,3 +285,9 @@ def print_size_of_model(model):
     torch.save(model.state_dict(), "temp.p")
     print('Size (MB):', os.path.getsize("temp.p")/1e6)
     os.remove('temp.p')
+
+def load_model_quantize(quantized_model, model):
+    """ Loads in the weights into an object meant for quantization """
+    state_dict = model.state_dict()
+    #model = model.to('cpu')
+    quantized_model.load_state_dict(state_dict)

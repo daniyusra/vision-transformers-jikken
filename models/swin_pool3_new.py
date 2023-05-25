@@ -260,7 +260,14 @@ class SwinTransformerBlock(nn.Module):
         x = self.norm1(x)
         x = x.view(B, H, W, C)
 
+        #print("X BEFORE WINDOWS")
+        #print(x);
+
         # cyclic shift
+        '''
+        TO-DO: understand how the shifting window is applied
+        '''
+
         if self.shift_size > 0:
             if not self.fused_window_process:
                 shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -273,18 +280,29 @@ class SwinTransformerBlock(nn.Module):
             # partition windows
             x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
 
+        #print("X AFTER WINDOWS")
+        #print(x)
+
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        
+        #print("x AFTER View")
+        #print(x)
+
 
         # W-MSA/SW-MSA
         #attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
         
-        attn_windows = x_windows + self.layer_scale_1*self.token_mixer(x_windows)
-
+        x_windows = x.reshape(B,C,H,W)
+        #attn_windows = x_windows + self.layer_scale_1*self.token_mixer(x_windows)
+        x_windows = self.token_mixer(x_windows)
+        attn_windows = x_windows.reshape(B,H,W,C)
+        attn_windows = self.layer_scale_1*attn_windows
+        
         
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
 
-        # reverse cyclic shift
+        # reverse cyclic shift TO-DO: understand how this works as well
         if self.shift_size > 0:
             if not self.fused_window_process:
                 shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
@@ -294,12 +312,15 @@ class SwinTransformerBlock(nn.Module):
         else:
             shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
             x = shifted_x
+            
         x = x.view(B, H * W, C)
+
         x = shortcut + self.drop_path(x)
 
         # FFN
         x = x + self.drop_path(self.layer_scale_1*self.mlp(self.norm2(x)))
 
+        #return
         return x
 
     def extra_repr(self) -> str:
@@ -336,27 +357,40 @@ class PatchMerging(nn.Module):
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
+        print("input resolution", input_resolution)
+        print("dim", dim)
+
 
     def forward(self, x):
         """
         x: B, H*W, C
         """
+
+        #print("x shape before Patch Merge", x.shape)
+
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
+        
+        #print("x shape after view before Patch Merge", x.shape)
 
         x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
         x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
         x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
+        
+        #print("x shape before view after Patch Merge", x.shape)
+        
         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
         x = self.norm(x)
         x = self.reduction(x)
+
+        #print("x shape after Patch Merge", x.shape)
 
         return x
 
@@ -470,8 +504,11 @@ class PatchEmbed(nn.Module):
             self.norm = norm_layer(embed_dim)
         else:
             self.norm = None
+        
+        print("Image Size", img_size)
 
     def forward(self, x):
+        #print("BEFORE PATCH EMBEDDING X SHAPE", x.shape)
         B, C, H, W = x.shape
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
@@ -479,6 +516,7 @@ class PatchEmbed(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
+        #print("AFTER PATCH EMBEDDING X SHAPE", x.shape)    
         return x
 
     def flops(self):

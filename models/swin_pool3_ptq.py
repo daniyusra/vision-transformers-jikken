@@ -5,9 +5,10 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
-from torch.quantization import QuantStub, DeQuantStub, QConfig, MinMaxObserver
+from torch.quantization import QuantStub, DeQuantStub
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.vit_pool import Pooling
+from torch.ao.nn.quantized.functional import avg_pool2d
+#from models.vit_pool import Pooling
 
 try:
     import os, sys
@@ -69,6 +70,50 @@ def window_reverse(windows, window_size, H, W):
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
+"""
+class QuantizedPooling(nn.Module):
+    
+    Implementation of quantized pooling for SwinPoolFormer-PTQ
+    --pool_size: pooling size
+    
+    def __init__(self, pool_size=3,  q = False):
+        super().__init__()
+
+        if (not q):
+            self.pool = nn.AvgPool2d(
+                pool_size, stride=1, padding=pool_size//2, count_include_pad=False)
+        
+        self.q = q
+        self.pool_size = pool_size
+        #print("condition of q of quantizedpooling ={}".format(q))
+
+    def forward(self, x):
+        if (not self.q):
+            return self.pool(x) - x
+        else:
+            return avg_pool2d(x, self.pool_size, stride=1, padding = self.pool_size//2, count_include_pad=False) - x
+"""
+
+class DequantizedPooling(nn.Module):
+    """
+    Implementation of quantized pooling for SwinPoolFormer-PTQ
+    --pool_size: pooling size
+    """
+    def __init__(self, pool_size=3,  q = False):
+        super().__init__()
+
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+
+        self.pool = nn.AvgPool2d(
+            pool_size, stride=1, padding=pool_size//2, count_include_pad=False)
+
+
+    def forward(self, x):
+        x=self.dequant(x)
+        #print("The variable, quant(pool(x) - x ) is of type:", (self.quant(self.pool(x) - x)).dtype )
+        return self.quant(self.pool(x) - x)
+
 
 
 class WindowAttention(nn.Module):
@@ -190,7 +235,7 @@ class SwinTransformerBlock(nn.Module):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 fused_window_process=False, pool_size=3, layer_scale_init_value=1e-5):
+                 fused_window_process=False, pool_size=3, layer_scale_init_value=1e-5,  q = False):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -210,7 +255,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-        self.token_mixer = Pooling(pool_size=pool_size)
+        self.token_mixer = DequantizedPooling(pool_size=pool_size, q=q)
         self.layer_scale_1 = nn.Parameter(
                 layer_scale_init_value * torch.ones((dim)), requires_grad=True)
 
@@ -267,8 +312,8 @@ class SwinTransformerBlock(nn.Module):
         # W-MSA/SW-MSA
         #attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
         
-        attn_windows = x_windows + self.layer_scale_1*self.token_mixer(x_windows)
-
+        #attn_windows = x_windows + self.layer_scale_1*self.token_mixer(x_windows)
+        attn_windows = x_windows + self.token_mixer(x_windows)
         
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -382,7 +427,7 @@ class BasicLayer(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 fused_window_process=False):
+                 fused_window_process=False, q = False):
 
         super().__init__()
         self.dim = dim
@@ -400,7 +445,7 @@ class BasicLayer(nn.Module):
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer,
-                                 fused_window_process=fused_window_process)
+                                 fused_window_process=fused_window_process, q = q)
             for i in range(depth)])
 
         # patch merging layer
@@ -465,7 +510,10 @@ class PatchEmbed(nn.Module):
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+       # print("inside-patch")
+        #print(x)
         x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
+        #print("after-patch-proj")
         if self.norm is not None:
             x = self.norm(x)
         return x
@@ -554,7 +602,8 @@ class SwinPoolFormersPTQuantizable(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               fused_window_process=fused_window_process)
+                               fused_window_process=fused_window_process,
+                               q = q)
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
@@ -564,9 +613,9 @@ class SwinPoolFormersPTQuantizable(nn.Module):
 
         
         if q:
-          self.qconfig = QConfig(
-                activation=MinMaxObserver.with_args(dtype=torch.qint8),
-                weight=MinMaxObserver.with_args(dtype=torch.qint32))
+          #self.qconfig = QConfig(
+                #activation=MinMaxObserver.with_args(dtype=torch.qint8),
+                #weight=MinMaxObserver.with_args(dtype=torch.qint32))
           self.quant = QuantStub()
           self.dequant = DeQuantStub()
 
@@ -592,7 +641,10 @@ class SwinPoolFormersPTQuantizable(nn.Module):
     def forward_features(self, x):
         if self.q:
           x = self.quant(x)
+    
         x = self.patch_embed(x)
+
+        #print("after-patch")
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
@@ -608,8 +660,10 @@ class SwinPoolFormersPTQuantizable(nn.Module):
         return x
 
     def forward(self, x):
+        #print("jancok-start")
         x = self.forward_features(x)
         x = self.head(x)
+        #print("jancok-end")
         return x
 
     def flops(self):

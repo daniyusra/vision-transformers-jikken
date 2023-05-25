@@ -25,9 +25,10 @@ import argparse
 import pandas as pd
 import csv
 import time
+from utils import load_model_quantize
 
 from models import *
-from utils import progress_bar, load_pretrained
+from utils import print_size_of_model, progress_bar, load_pretrained
 from randomaug import RandAugment
 from models.vit import ViT
 from models.convmixer import ConvMixer
@@ -48,7 +49,10 @@ parser.add_argument('--n_epochs', type=int, default='200')
 parser.add_argument('--patch', default='4', type=int, help="patch for ViT")
 parser.add_argument('--dimhead', default="512", type=int)
 parser.add_argument('--convkernel', default='8', type=int, help="parameter for convmixer")
-
+parser.add_argument('--warmup', '-w', action = "store_true", help = "trigger for warmup")
+parser.add_argument('--warmuptype', default="linear", help = "method for warmup")
+parser.add_argument("--warmupepochs", default = "0", type=int, help = "amount of warmup epochs")
+parser.add_argument("--normlayer", default = "", help = "Normalization layer used for SwinPool")
 
 args = parser.parse_args()
 
@@ -230,16 +234,46 @@ elif args.net=="swin":
 
 elif args.net == "swinpool":
     from models.swin_pool3 import SwinTransformer
+    if (args.normlayer != ""):
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+    else:
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+    #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+    print(net.flops())
+
+elif args.net == "swinpool-24":
+    from models.swin_pool3 import SwinTransformer
+    if (args.normlayer != ""):
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer, depths = [4,4,12,4])
+    else:
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths = [4,4,12,4])
+    #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+    print(net.flops())
+
+elif args.net == "swinpool-24-2":
+    from models.swin_pool3 import SwinTransformer
+    if (args.normlayer != ""):
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer, depths = [2,2,18,2])
+    else:
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths = [2,2,18,2])
+    #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+    print(net.flops())
+
+elif args.net == "swinpoolconv1d":
+    from models.swin_pool3conv1d import SwinTransformer
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
+
 
 elif args.net == "swinpoolconv2d":
     from models.swin_pool3conv2d import SwinTransformer
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
-    cudnn.deterministic=True
 
 elif args.net == "swinpoolptq":
     from models.swin_pool3_ptq import SwinPoolFormersPTQuantizable
@@ -248,10 +282,24 @@ elif args.net == "swinpoolptq":
     quantize = True;
 
 elif args.net == "swinpool-exp":
-    from models.swin_pool3 import SwinTransformer
+    from models.swin_pool3_new import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+    print(net.flops())
+
+elif args.net == "swinpool-exp-24":
+    from models.swin_pool3_new import SwinTransformer
     net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2, 2, 18, 2])
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
+
+elif args.net == "swinpool-mlp-test":
+    from models.swin_pool4_fortesting import SwinMLP
+    net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)   
+
+elif args.net == "swinpool-mlp":
+    from models.swin_pool4 import SwinMLP
+    net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)                    
     
 
 elif args.net == "swinpooltpretrained22":
@@ -302,6 +350,8 @@ elif args.net == "swinoff2":
     from models.swin_official2 import SwinTransformerV2
     net = SwinTransformerV2(window_size=args.patch, num_classes=10, img_size=size)
 
+
+
 elif args.net == "vit_mlp":
     from models.vit_MLP import ResMLP
     net = ResMLP(dim = int(args.dimhead), num_classes=10, patch_size=args.patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
@@ -338,9 +388,19 @@ if args.opt == "adam":
     optimizer = optim.Adam(net.parameters(), lr=args.lr)
 elif args.opt == "sgd":
     optimizer = optim.SGD(net.parameters(), lr=args.lr)  
+elif args.opt == "adamw":
+    optimizer = optim.AdamW(net.parameters(), lr = args.lr, weight_decay=0.05)
     
 # use cosine scheduling
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.n_epochs)
+
+#warmup
+if (args.warmup):
+    scheduler1 = scheduler
+    if(args.warmuptype == "linear"):
+        scheduler2 = torch.optim.lr_scheduler.LinearLR(optimizer, total_iters= args.warmupepochs)
+    scheduler = torch.optim.lr_scheduler.ChainedScheduler([scheduler1,scheduler2])
+
 
 ##### Training
 scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
@@ -370,10 +430,13 @@ def train(epoch):
         
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
             % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-    return train_loss/(batch_idx+1)
+    
+    acc = 100.*correct/total
+
+    return train_loss/(batch_idx+1), acc
 
 ##### Validation
-def test(epoch):
+def test(net, epoch):
     global best_acc
     start = time.time()
 
@@ -418,6 +481,8 @@ def test(epoch):
 
 list_loss = []
 list_acc = []
+list_loss_train = []
+list_acc_train = []
 list_train_time = []
 list_test_time = []
 
@@ -425,17 +490,59 @@ if usewandb:
     wandb.watch(net)
     
 net.cuda()
-for epoch in range(start_epoch, args.n_epochs):
+if (args.warmup):
+    for epoch in range(args.warmupepochs):
+        print(scheduler.get_last_lr())
+        start = time.time()
+        trainloss, trainacc = train(epoch)
+        list_train_time.append(time.time()-start)
+
+        
+        val_loss, acc, start = test(net, epoch)
+        list_test_time.append(start)
+
+        scheduler.step()
+        
+        list_loss_train.append(trainloss)
+        list_acc_train.append(trainacc)
+        list_loss.append(val_loss)
+        list_acc.append(acc)
+        
+        # Log training..
+        if usewandb:
+            wandb.log({'epoch': epoch, 'train_loss': trainloss, 'val_loss': val_loss, "val_acc": acc, "lr": optimizer.param_groups[0]["lr"],
+            "epoch_time": time.time()-start})
+
+        # Write out csv..
+        with open(f'log/log_{args.net}_patch{args.patch}.csv', 'w') as f:
+            writer = csv.writer(f, lineterminator='\n')
+            writer.writerow(list_loss_train) 
+            writer.writerow(list_acc_train)  
+            writer.writerow(list_loss) 
+            writer.writerow(list_acc)
+            writer.writerow(list_train_time) 
+            writer.writerow(list_test_time)
+            
+
+            
+        print(list_loss)
+    print("warmup phase complete")
+
+for epoch in range(start_epoch+args.warmupepochs, args.n_epochs+args.warmupepochs):
+    print(scheduler.get_last_lr())
     start = time.time()
-    trainloss = train(epoch)
+    trainloss, trainacc = train(epoch)
     list_train_time.append(time.time()-start)
 
     
-    val_loss, acc, start = test(epoch)
+    val_loss, acc, start = test(net, epoch)
     list_test_time.append(start)
 
-    scheduler.step(epoch-1) # step cosine scheduling
+    #scheduler.step() # step cosine scheduling
+    scheduler.step()
     
+    list_loss_train.append(trainloss)
+    list_acc_train.append(trainacc)
     list_loss.append(val_loss)
     list_acc.append(acc)
     
@@ -447,13 +554,41 @@ for epoch in range(start_epoch, args.n_epochs):
     # Write out csv..
     with open(f'log/log_{args.net}_patch{args.patch}.csv', 'w') as f:
         writer = csv.writer(f, lineterminator='\n')
+        writer.writerow(list_loss_train) 
+        writer.writerow(list_acc_train)  
         writer.writerow(list_loss) 
-        writer.writerow(list_acc) 
-        writer.writerow(list_train_time)
+        writer.writerow(list_acc)
+        writer.writerow(list_train_time) 
         writer.writerow(list_test_time)
+         
+
+        
     print(list_loss)
 
 
+if quantize:
+    load_model_quantize(qnet, net.module)
+ 
+    qnet.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+    torch.quantization.prepare(qnet, inplace=True)
+    qnet.cuda()
+    test(qnet, 201)
+    print("jancok")
+    qnet = qnet.to('cpu')
+    qnet.eval() 
+    torch.quantization.convert(qnet, inplace=True)
+    print("QNET model")
+    print_size_of_model(qnet)
+
+    print("NET MODEL")
+    print_size_of_model(net)
+    torch.set_num_threads(1) 
+    #qnet = qnet.to('cpu')
+    device = 'cpu'
+    test(qnet, 201)
+    
+    
+    
 
 # writeout wandb
 if usewandb:
