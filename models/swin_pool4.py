@@ -32,6 +32,20 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
 
+class GroupNorm(nn.GroupNorm):
+    """
+    Group Normalization with 1 group.
+    Input: tensor in shape [B, L, C] 
+    """
+    def __init__(self, num_channels, **kwargs):
+        super().__init__(1, num_channels, **kwargs)
+    
+    def forward(self,x):
+        B, L, C = x.shape
+        x = x.reshape(B,C,L)
+        x = super().forward(x)
+        x = x.reshape(B,L,C)
+        return x;
 
 def window_partition(x, window_size):
     """
@@ -165,6 +179,7 @@ class SwinMLPBlock(nn.Module):
             x = shifted_x[:, P_t:-P_b, P_l:-P_r, :].contiguous()
         else:
             x = shifted_x
+            
         x = x.view(B, H * W, C)
 
         x = self.layer_scale_1*x
@@ -396,6 +411,9 @@ class SwinMLP(nn.Module):
         self.patch_norm = patch_norm
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
+
+        if norm_layer == "GroupNorm":
+            norm_layer = GroupNorm;
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
