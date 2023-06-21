@@ -1,8 +1,9 @@
 # --------------------------------------------------------
-# Swin Transformer
-# Copyright (c) 2021 Microsoft
-# Licensed under The MIT License [see LICENSE for details]
-# Written by Ze Liu
+# Swin Pool MLP (Swin Pool implementation based on Swin-MLP )
+# 
+# Current Best Version per 6/12 Meeting
+#  
+# Written by Muhammad Danial Yusra
 # --------------------------------------------------------
 
 import torch
@@ -116,10 +117,6 @@ class SwinMLPBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
         # use group convolution to implement multi-head MLP
-        self.spatial_mlp = nn.Conv1d(self.num_heads * self.window_size ** 2,
-                                     self.num_heads * self.window_size ** 2,
-                                     kernel_size=1,
-                                     groups=self.num_heads)
 
         self.token_mixer = Pooling(pool_size=pool_size)
         
@@ -148,26 +145,12 @@ class SwinMLPBlock(nn.Module):
             shifted_x = x
         _, _H, _W, _ = shifted_x.shape
 
-        # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-        #x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
-        # Window/Shifted-Window Spatial MLP
-        #x_windows_heads = x_windows.view(-1, self.window_size * self.window_size, self.num_heads, C // self.num_heads)
-        #x_windows_heads = x_windows_heads.transpose(1, 2)  # nW*B, nH, window_size*window_size, C//nH
-        #x_windows_heads = x_windows_heads.reshape(-1, self.num_heads * self.window_size * self.window_size, C // self.num_heads)
-        
-
-        #spatial_mlp_windows = self.spatial_mlp(x_windows_heads)  # nW*B, nH*window_size*window_size, C//nH
-        #new parts start
         x_windows = x_windows.reshape(-1, C, self.window_size, self.window_size)
         spatial_mlp_windows = self.token_mixer(x_windows)
         spatial_mlp_windows = x_windows.reshape(-1, self.window_size, self.window_size, C)
         #new parts end
-        #spatial_mlp_windows = spatial_mlp_windows.view(-1, self.num_heads, self.window_size * self.window_size, C // self.num_heads).transpose(1, 2)
-        #spatial_mlp_windows = spatial_mlp_windows.reshape(-1, self.window_size * self.window_size, C)
-
-        
 
         # merge windows
         spatial_mlp_windows = spatial_mlp_windows.reshape(-1, self.window_size, self.window_size, C)
@@ -376,7 +359,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class SwinMLP(nn.Module):
+class SwinPoolMLP(nn.Module):
     r""" Swin MLP
 
     Args:
