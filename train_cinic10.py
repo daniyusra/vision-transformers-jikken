@@ -46,6 +46,7 @@ parser.add_argument('--n_epochs', type=int, default='200')
 parser.add_argument('--patch', default='4', type=int, help="patch for ViT")
 parser.add_argument('--dimhead', default="512", type=int)
 parser.add_argument('--convkernel', default='8', type=int, help="parameter for convmixer")
+parser.add_argument('--mixup', default=0.0, type=float, help="enter value between 1.0 and 0.0 to allow mixup" )
 
 args = parser.parse_args()
 
@@ -324,17 +325,46 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.n_epochs)
 ##### Training
 scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 def train(epoch):
+    def mixup(data, targets, alpha):
+        indices = torch.randperm(data.size(0))
+        shuffled_data = data[indices]
+        shuffled_targets = targets[indices]
+
+        lam = np.random.beta(alpha, alpha)
+        new_data = data * lam + shuffled_data * (1 - lam)
+        new_targets = [targets, shuffled_targets, lam]
+        return new_data, new_targets
+
+
+    def mixup_criterion(preds, targets):
+        targets1, targets2, lam = targets[0], targets[1], targets[2]
+        mixupcriterion = criterion
+        return lam * mixupcriterion(preds, targets1) + (1 - lam) * mixupcriterion(preds, targets2)
+    
     print('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
+
+
         inputs, targets = inputs.to(device), targets.to(device)
+
+        p = np.random.rand()
+        if p < args.mixup:
+            inputs, targets = mixup(inputs, targets, 0.8)
         # Train with amp
+
+
+        
         with torch.cuda.amp.autocast(enabled=use_amp):
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            if p < args.mixup:
+                loss = mixup_criterion(outputs, targets)
+            else:
+                loss = criterion(outputs, targets) 
+            #loss = criterion(outputs, targets)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -394,7 +424,7 @@ list_acc = []
 
 if usewandb:
     wandb.watch(net)
-    
+
 net.cuda()
 for epoch in range(start_epoch, args.n_epochs):
     start = time.time()

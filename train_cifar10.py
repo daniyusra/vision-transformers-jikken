@@ -13,10 +13,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
+
 import numpy as np
 
 import torchvision
 import torchvision.transforms as transforms
+import torchmetrics
 from torchsummary import summary
 
 
@@ -38,10 +40,9 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=1e-4, type=float, help='learning rate') # resnets.. 1e-3, Vit..1e-4
 parser.add_argument('--opt', default="adam")
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--noaug', action='store_true', help='disable use randomaug')
+parser.add_argument('--aug', '-aug', action='store_true', help='use randomaug')
 parser.add_argument('--noamp', action='store_true', help='disable mixed precision training. for older pytorch versions')
 parser.add_argument('--nowandb', action='store_true', help='disable wandb')
-parser.add_argument('--mixup', action='store_true', help='add mixup augumentations')
 parser.add_argument('--net', default='vit')
 parser.add_argument('--bs', default='512')
 parser.add_argument('--size', default="32")
@@ -53,8 +54,12 @@ parser.add_argument('--warmup', '-w', action = "store_true", help = "trigger for
 parser.add_argument('--warmuptype', default="linear", help = "method for warmup")
 parser.add_argument("--warmupepochs", default = "0", type=int, help = "amount of warmup epochs")
 parser.add_argument("--normlayer", default = "", help = "Normalization layer used for SwinPool")
+parser.add_argument('--mixup', default=0.0, type=float, help="enter value between 1.0 and 0.0 to allow mixup augmentation" )
+parser.add_argument("--cutmix", default =0.0, type = float, help = "enter value between 1.0 and 0.0 to allow cutmix augmentation")
 
 args = parser.parse_args()
+
+assert args.mixup + args.cutmix <= 1.0
 
 # take in args
 usewandb = False
@@ -69,7 +74,7 @@ bs = int(args.bs)
 imsize = int(args.size)
 
 use_amp = bool(~args.noamp)
-aug = args.noaug
+aug = args.aug
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 best_acc = 0  # best test accuracy
@@ -98,6 +103,7 @@ transform_test = transforms.Compose([
 
 # Add RandAugment with N, M(hyperparameter)
 if aug:  
+    print("AUGMENT YO!")
     N = 2; M = 14;
     transform_train.transforms.insert(0, RandAugment(N, M))
 
@@ -275,6 +281,12 @@ elif args.net == "swinpoolconv2d":
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
 
+elif args.net == "swinpoolconv2d-i2":
+    from models.swin_pool3conv2d_i2 import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+       #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+    print(net.flops())
+
 elif args.net == "swinpoolptq":
     from models.swin_pool3_ptq import SwinPoolFormersPTQuantizable
     net = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size)
@@ -293,13 +305,16 @@ elif args.net == "swinpool-exp-24":
        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
     print(net.flops())
 
-elif args.net == "swinpool-mlp-test":
-    from models.swin_pool4_fortesting import SwinMLP
+elif args.net == "swinpool-view-test":
+    from models.swin_pool4_view import SwinMLP
     net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)   
 
 elif args.net == "swinpool-mlp":
     from models.swin_pool4 import SwinMLP
-    net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)                    
+    if (args.normlayer != ""):
+        net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+    else:
+        net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)                    
     
 
 elif args.net == "swinpooltpretrained22":
@@ -308,6 +323,12 @@ elif args.net == "swinpooltpretrained22":
     #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
     #net.eval()
     load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
+
+elif args.net == "swinoffconv2D":
+    from models.swin_official_conv2d import SwinTransformer
+    net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+    #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
+    #net.eval()
 
 elif args.net == "swinabl":
     from models.swin_abl import SwinTransformer
@@ -360,6 +381,9 @@ elif args.net == "poolformer":
     from models.vit_pool import PoolFormer
     net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
 
+elif args.net == "poolformer_linear":
+    from models.vit_pool_linear import PoolFormer
+    net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
 
 
 # For Multi-GPU
@@ -405,6 +429,61 @@ if (args.warmup):
 ##### Training
 scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 def train(epoch):
+    #region data augmentation
+    metric = torchmetrics.Accuracy(task = "multiclass", num_classes=10).to(device)
+    def mixup(data, targets, alpha):
+        indices = torch.randperm(data.size(0))
+        shuffled_data = data[indices]
+        shuffled_targets = targets[indices]
+
+        lam = np.random.beta(alpha, alpha)
+        new_data = data * lam + shuffled_data * (1 - lam)
+        new_targets = [targets, shuffled_targets, lam]
+        return new_data, new_targets
+
+
+    def mixup_criterion(preds, targets):
+        targets1, targets2, lam = targets[0], targets[1], targets[2]
+        mixupcriterion = criterion
+        return lam * mixupcriterion(preds, targets1) + (1 - lam) * mixupcriterion(preds, targets2)
+
+    def mixup_accuracy(metric, preds, y_a, y_b, lam):
+        return lam * metric(preds, y_a) + (1 - lam) * metric(preds, y_b)
+
+    def cutmix(data, targets, alpha):
+        def rand_bbox(size, lam):
+            W = size[2]
+            H = size[3]
+            cut_rat = np.sqrt(1. - lam)
+            cut_w = int(W * cut_rat)
+            cut_h = int(H * cut_rat)
+
+            # uniform
+            cx = np.random.randint(W)
+            cy = np.random.randint(H)
+
+            bbx1 = np.clip(cx - cut_w // 2, 0, W)
+            bby1 = np.clip(cy - cut_h // 2, 0, H)
+            bbx2 = np.clip(cx + cut_w // 2, 0, W)
+            bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+            return bbx1, bby1, bbx2, bby2
+        indices = torch.randperm(data.size(0))
+        shuffled_data = data[indices]
+        shuffled_targets = targets[indices]
+
+        lam = np.random.beta(alpha, alpha)
+        bbx1, bby1, bbx2, bby2 = rand_bbox(data.size(), lam)
+        data[:, :, bbx1:bbx2, bby1:bby2] = data[indices, :, bbx1:bbx2, bby1:bby2]
+        # adjust lambda to exactly match pixel ratio
+        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data.size()[-1] * data.size()[-2]))
+
+        new_targets = [targets, shuffled_targets, lam]
+        return data, new_targets
+
+    #endregion
+
+
     print('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
@@ -413,19 +492,36 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         # Train with amp
-    
+
+        p = np.random.rand()
+        if p < args.mixup:
+            inputs, targets = mixup(inputs, targets, 0.8)
+        elif p < args.cutmix + args.mixup:
+            inputs, targets = cutmix(inputs, targets, 0.8)
+
         with torch.cuda.amp.autocast(enabled=use_amp):
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            if p < args.mixup:
+                loss = mixup_criterion(outputs, targets)
+                total += outputs.size(0)
+                correct += mixup_accuracy(metric, outputs, targets[0],targets[1], targets[2])
+            elif p < args.cutmix + args.mixup:
+                loss = mixup_criterion(outputs, targets)
+                total += outputs.size(0)
+                correct += mixup_accuracy(metric, outputs, targets[0],targets[1], targets[2])
+            else:
+                loss = criterion(outputs, targets) 
+                total += targets.size(0)
+                _, predicted = outputs.max(1)
+                correct += predicted.eq(targets).sum().item()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad()
 
         train_loss += loss.item()
-        _, predicted = outputs.max(1)
-        total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+        #total += targets.size(0)
+        #correct += predicted.eq(targets).sum().item()
 
         
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
