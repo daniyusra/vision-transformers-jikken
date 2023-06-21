@@ -1,205 +1,196 @@
 import torch
-from models.convmixer import ConvMixer
-from models.resnet import ResNet101, ResNet18, ResNet34, ResNet50
-from models.vgg import VGG
 import torch.nn as nn
 from utils import load_pretrained
 
-def load_model(netname, imsize, patch, dimhead, num_classes, cuda):
-    # Data
-    if netname=="vit_timm":
+def load_model(args):
+    bs = int(args.bs)
+    imsize = int(args.size)
+
+    if args.net=="vit_timm":
         size = 384
     else:
         size = imsize
 
-    # Model factory..
-    print('==> Building model..')
-    # net = VGG('VGG19')
-    if netname=='res18':
-        net = ResNet18()
-    elif netname=='vgg':
-        net = VGG('VGG19')
-    elif netname=='res34':
-        net = ResNet34()
-    elif netname=='res50':
-        net = ResNet50()
-    elif netname=='res101':
-        net = ResNet101()
-    elif netname=="convmixer":
-        # from paper, accuracy >96%. you can tune the depth and dim to scale accuracy and speed.
-        net = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=num_classes)
-    elif netname=="mlpmixer":
-        from models.mlpmixer import MLPMixer
-        net = MLPMixer(
-        image_size = 32,
-        channels = 3,
-        patch_size = patch,
-        dim = 512,
-        depth = 6,
-        num_classes = num_classes
-        )
-    elif netname=="vit_small":
+
+    if args.net=="vit_small":
         from models.vit_small import ViT
         net = ViT(
         image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
+        patch_size = args.patch,
+        num_classes = 10,
+        dim = int(args.dimhead),
         depth = 6,
         heads = 8,
         mlp_dim = 512,
         dropout = 0.1,
         emb_dropout = 0.1
-        )
-    elif netname=="vit_tiny":
+    )
+    elif args.net=="vit_tiny":
         from models.vit_small import ViT
         net = ViT(
         image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
+        patch_size = args.patch,
+        num_classes = 10,
+        dim = int(args.dimhead),
         depth = 4,
         heads = 6,
         mlp_dim = 256,
         dropout = 0.1,
         emb_dropout = 0.1
-        )
-    elif netname=="simplevit":
+    )
+    elif args.net=="simplevit":
         from models.simplevit import SimpleViT
         net = SimpleViT(
         image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
+        patch_size = args.patch,
+        num_classes = 10,
+        dim = int(args.dimhead),
         depth = 6,
         heads = 8,
         mlp_dim = 512
-        )
-    elif netname=="vit":
+    )
+    elif args.net=="vit":
         # ViT for cifar10
         net = ViT(
         image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
+        patch_size = args.patch,
+        num_classes = 10,
+        dim = int(args.dimhead),
         depth = 6,
         heads = 8,
         mlp_dim = 512,
         dropout = 0.1,
         emb_dropout = 0.1
-        )
+    )
 
 
-    elif netname=="vit_timm":
+    elif args.net=="vit_timm":
         import timm
         net = timm.create_model("vit_base_patch16_384", pretrained=True)
-        net.head = nn.Linear(net.head.in_features, num_classes)
-    elif netname=="cait":
-        from models.cait import CaiT
-        net = CaiT(
-        image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
-        depth = 6,   # depth of transformer for patch to patch attention only
-        cls_depth=2, # depth of cross attention of CLS tokens to patch
-        heads = 8,
-        mlp_dim = 512,
-        dropout = 0.1,
-        emb_dropout = 0.1,
-        layer_dropout = 0.05
-        )
-
-    elif netname=="cait_small":
-        from models.cait import CaiT
-        net = CaiT(
-        image_size = size,
-        patch_size = patch,
-        num_classes = num_classes,
-        dim = int(dimhead),
-        depth = 6,   # depth of transformer for patch to patch attention only
-        cls_depth=2, # depth of cross attention of CLS tokens to patch
-        heads = 6,
-        mlp_dim = 256,
-        dropout = 0.1,
-        emb_dropout = 0.1,
-        layer_dropout = 0.05
-    )
-    elif netname=="swin":
+        net.head = nn.Linear(net.head.in_features, 10)
+   
+    elif args.net=="swin":
         from models.swin import swin_t
-        net = swin_t(window_size=patch,
-                    num_classes=num_classes,
+        net = swin_t(window_size=args.patch,
+                    num_classes=10,
                     downscaling_factors=(2,2,2,1))
 
-    elif netname == "swinpool":
-        from models.swin_pool3 import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size)
-        #window_size =patch, num_classes=num_classes, downscaling_factors=(2,2,2,1))
+    elif args.net == "swinpool":
+        from models.swin_pool import SwinPool
+        if (args.normlayer != ""):
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+        else:
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size)
+        #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
         print(net.flops())
+
+    elif args.net == "swinpool-24":
+        from models.swin_pool import SwinPool
+        if (args.normlayer != ""):
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer, depths = [4,4,12,4])
+        else:
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size, depths = [4,4,12,4])
+        #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpool-24-2":
+        from models.swin_pool import SwinPool
+        if (args.normlayer != ""):
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer, depths = [2,2,18,2])
+        else:
+            net = SwinPool(window_size=args.patch, num_classes=10, img_size=size, depths = [2,2,18,2])
+        #net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpoolconv1d":
+        from models.swin_poolconv1d import SwinPoolConv1D
+        net = SwinPoolConv1D(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+
+    elif args.net == "swinpoolconv2d":
+        from models.swin_poolconv2d import SwinPoolConv2D
+        net = SwinPoolConv2D(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpoolconv2d-i2":
+        from models.swin_poolconv2d_i2 import SwinPoolConv2DExperimental
+        net = SwinPoolConv2DExperimental(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpoolptq":
+        from models.swin_pool_ptq import SwinPoolFormersPTQuantizable
+        net = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size)
+        qnet = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size, q=True)
+        quantize = True;
+
+ 
+    elif args.net == "swinpool-mlp":
+        from models.swin_pool_mlp import SwinMLP
+        if (args.normlayer != ""):
+            net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+        else:
+            net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)                    
         
 
-    elif netname == "swinpool-exp":
-        from models.swin_pool3 import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size, depths=[2, 2, 2, 2])
-        #window_size =patch, num_classes=num_classes, downscaling_factors=(2,2,2,1))
-        print(net.flops())
-        
-    elif netname == "swinpooltpretrained22":
-        from models.swin_pool3 import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size)
+    elif args.net == "swinpooltpretrained22":
+        from models.swin_pool import SwinTransformer
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
         #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
         #net.eval()
         load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
 
-    elif netname == "swinabl":
+    elif args.net == "swinoffconv2D":
+        from models.swin_official_conv2d import SwinTransformer
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+        #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
+        #net.eval()
+
+    elif args.net == "swinabl":
         from models.swin_abl import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size)
-        #window_size =patch, num_classes=num_classes, downscaling_factors=(2,2,2,1))
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
         print(net.flops())
 
-    elif netname == "swinabl-s":
+    elif args.net == "swinabl-s":
         from models.swin_abl import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size, depths=[2, 2, 18, 2])
-        #window_size =patch, num_classes=num_classes, downscaling_factors=(2,2,2,1))
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2, 2, 18, 2])
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
 
-    elif netname == "swinoff":
+    elif args.net == "swinoff":
         from models.swin_official import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size)
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
         print(net.flops())
 
-    elif netname == "swinoff-t-22pretrained":
+    elif args.net == "swinoff-t-22pretrained":
         from models.swin_official import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size)
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size)
         for param in net.parameters():
             print(type(param), param.size())
         #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
         #net.eval()
         load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
 
-    elif netname == "swinoff-s":
+    elif args.net == "swinoff-s-22pretrained":
         from models.swin_official import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size, depths = [2,2,18,2])
-    
-    elif netname =="swinoff-b":
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths=[2,2,18,2])
+        #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
+        #net.eval()
+        load_pretrained("./pretrainedmodels/swin_small_patch4_window7_224_22k.pth", net)
+
+    elif args.net =="swinoff-b":
         from models.swin_official import SwinTransformer
-        net = SwinTransformer(window_size=patch, num_classes=num_classes, img_size=size, depths = [2,2,18,2], embed_dim = 128, num_heads = (4,8,16,32))
+        net = SwinTransformer(window_size=args.patch, num_classes=10, img_size=size, depths = [2,2,18,2], embed_dim = 128, num_heads = (4,8,16,32))
     
 
-    elif netname == "swinoff2":
-        from models.swin_official2 import SwinTransformerV2
-        net = SwinTransformerV2(window_size=patch, num_classes=num_classes, img_size=size)
-
-    elif netname == "vit_mlp":
-        from models.vit_MLP import ResMLP
-        net = ResMLP(dim = int(dimhead), num_classes=num_classes, patch_size=patch, image_size=size, depth=16, mlp_dim=512, in_channels=3)
-
-    elif netname == "poolformer":
+    elif args.net == "poolformer":
         from models.vit_pool import PoolFormer
         net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
-
-    if cuda:
-	    net = torch.nn.DataParallel(net).cuda()
-    else:
-        net = torch.nn.DataParallel(net)
 
     return net
