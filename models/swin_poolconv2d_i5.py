@@ -1,7 +1,17 @@
+# --------------------------------------------------------
+# Swin Pool Conv2D (implementation of Swin Pool on Swin)
+# 
+# The First Implementation of Swin Pool
+# But the Linear Network is replaced with Conv2D (experiential)
+#
+# Written by Muhammad Danial Yusra
+# --------------------------------------------------------
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from models.vit_pool import Pooling
 
 try:
     import os, sys
@@ -43,6 +53,7 @@ class Mlp(nn.Module):
         x = x.transpose(1,3)
 
         return x
+
 
 def window_partition(x, window_size):
     """
@@ -128,7 +139,15 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        #qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
+        qkv = self.qkv(x)
+
+        print("X shape = {}".format(x.shape))
+        print("qkv shape after Linear 1 = {}".format(qkv.shape))
+
+        qkv = qkv.reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
@@ -150,8 +169,16 @@ class WindowAttention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+
+        print("x shape after transpose = {}".format(x.shape))
+
         x = self.proj(x)
+
+        print("x shape after proj = {}".format(x.shape))
         x = self.proj_drop(x)
+
+        raise Exception("FUCK")
+    
         return x
 
     def extra_repr(self) -> str:
@@ -193,7 +220,7 @@ class SwinTransformerBlock(nn.Module):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 fused_window_process=False):
+                 fused_window_process=False, pool_size=3, layer_scale_init_value=1e-5):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -208,14 +235,15 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim)
-        self.attn = WindowAttention(
-            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
-
+        print("cok3")
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
+
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        self.token_mixer = Pooling(pool_size=pool_size)
+        self.layer_scale_1 = nn.Parameter(
+                layer_scale_init_value * torch.ones((dim)), requires_grad=True)
 
         if self.shift_size > 0:
             # calculate attention mask for SW-MSA
@@ -268,8 +296,11 @@ class SwinTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        #attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        
+        attn_windows = x_windows + self.layer_scale_1*self.token_mixer(x_windows)
 
+        
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
 
@@ -286,7 +317,6 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
         x = shortcut + self.drop_path(x)
 
-
         shortcut = x;
 
         x = self.norm2(x)
@@ -298,6 +328,7 @@ class SwinTransformerBlock(nn.Module):
 
         x = x.reshape(B, H*W,C)
         x = shortcut + self.drop_path(x)
+        
         return x
 
     def extra_repr(self) -> str:
@@ -311,7 +342,8 @@ class SwinTransformerBlock(nn.Module):
         flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.window_size * self.window_size)
+        #flops += nW * self.attn.flops(self.window_size * self.window_size)
+        flops += nW * self.window_size * self.window_size
         # mlp
         flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         # norm2
@@ -486,7 +518,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class SwinTransformer(nn.Module):
+class SwinPoolConv2DExperimental(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030

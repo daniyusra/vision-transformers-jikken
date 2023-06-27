@@ -105,6 +105,11 @@ def load_model(args):
         #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
         print(net.flops())
 
+    elif args.net == "swinpool-exp":
+        from models.swin_pool_layerexperiments import SwinPool
+        net = SwinPool(window_size=args.patch, num_classes=10, img_size=size)
+        
+
     elif args.net == "swinpoolconv1d":
         from models.swin_poolconv1d import SwinPoolConv1D
         net = SwinPoolConv1D(window_size=args.patch, num_classes=10, img_size=size)
@@ -119,8 +124,38 @@ def load_model(args):
         print(net.flops())
 
     elif args.net == "swinpoolconv2d-i2":
-        from models.swin_poolconv2d_i2 import SwinPoolConv2DExperimental
-        net = SwinPoolConv2DExperimental(window_size=args.patch, num_classes=10, img_size=size)
+        from models.swin_poolconv2d_batchnorm import SwinPoolConv2DBatchNorm
+        net = SwinPoolConv2DBatchNorm(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+    
+    elif args.net == "swinpoolconv2d-nobias":
+        from models.swin_poolconv2d_nobias  import SwinPoolConv2DBatchNorm
+        net = SwinPoolConv2DBatchNorm(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpool-nobias":
+        from models.swin_pool_nobias import SwinPool
+        net = SwinPool(window_size=args.patch, num_classes=10, img_size=size)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpoolconv2d-i5":
+        from models.swin_poolconv2d_i5 import SwinPoolConv2DExperimental
+        net = SwinPoolConv2DExperimental(window_size=args.patch, num_classes=10, img_size=size, embed_dim = 96)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+
+    elif args.net == "swinpoolconv2d-i3":
+        from models.swin_poolconv2d_i3 import SwinPoolConv2DExperimental
+        net = SwinPoolConv2DExperimental(window_size=args.patch, num_classes=10, img_size=size, embed_dim = 128)
+        #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
+        print(net.flops())
+    
+    elif args.net == "swinpoolconv2d-i2-newdim":
+        from models.swin_poolconv2d_batchnorm import SwinPoolConv2DBatchNorm
+        net = SwinPoolConv2DBatchNorm(window_size=args.patch, num_classes=10, img_size=size, embed_dim=64)
         #window_size =args.patch, num_classes=10, downscaling_factors=(2,2,2,1))
         print(net.flops())
 
@@ -130,13 +165,19 @@ def load_model(args):
         qnet = SwinPoolFormersPTQuantizable(window_size=args.patch, num_classes=10, img_size=size, q=True)
         quantize = True;
 
- 
     elif args.net == "swinpool-mlp":
-        from models.swin_pool_mlp import SwinMLP
+        from models.swin_pool_mlp import SwinPoolMLP
         if (args.normlayer != ""):
-            net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+            net = SwinPoolMLP(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
         else:
-            net = SwinMLP(window_size=args.patch, num_classes=10, img_size=size)                    
+            net = SwinPoolMLP(window_size=args.patch, num_classes=10, img_size=size)   
+
+    elif args.net == "swinpool-mlp-conv2d":
+        from models.swin_pool_mlp_conv2d import SwinPoolMLPConv2D
+        if (args.normlayer != ""):
+            net = SwinPoolMLPConv2D(window_size=args.patch, num_classes=10, img_size=size, norm_layer=args.normlayer)
+        else:
+            net = SwinPoolMLPConv2D(window_size=args.patch, num_classes=10, img_size=size)                   
         
 
     elif args.net == "swinpooltpretrained22":
@@ -145,6 +186,7 @@ def load_model(args):
         #net.load_state_dict(torch.load("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth"))
         #net.eval()
         load_pretrained("./pretrainedmodels/swin_tiny_patch4_window7_224_22k.pth", net)
+
 
     elif args.net == "swinoffconv2D":
         from models.swin_official_conv2d import SwinTransformer
@@ -193,4 +235,7 @@ def load_model(args):
         from models.vit_pool import PoolFormer
         net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
 
+    elif args.net == "poolformer_linear":
+        from models.vit_pool_linear import PoolFormer
+        net = PoolFormer(layers=[2, 2, 6, 2], embed_dims=[64, 128, 320, 512], mlp_ratios= [4, 4, 4, 4], downsamples =[True, True, True, True]);
     return net

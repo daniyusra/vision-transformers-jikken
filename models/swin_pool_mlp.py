@@ -147,6 +147,8 @@ class SwinMLPBlock(nn.Module):
 
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
 
+
+        #to-try: add trannspose here!
         x_windows = x_windows.reshape(-1, C, self.window_size, self.window_size)
         spatial_mlp_windows = self.token_mixer(x_windows)
         spatial_mlp_windows = x_windows.reshape(-1, self.window_size, self.window_size, C)
